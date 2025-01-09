@@ -5,6 +5,7 @@ from enums.reason import Reason
 
 from random import randint
 from threading import Lock, Thread
+from time import sleep
 
 import Pyro5.api
 import Pyro5.server
@@ -24,6 +25,8 @@ class Server(object):
 
         self.__GAME_BOARD = ...
 
+        Thread(target=self.ping, args=(), daemon=True).start()
+
     def add_client(self, uri):
         with self.lock:
             if self.__CONNECTED_CLIENTS < self.__MAX_CLIENTS:
@@ -40,19 +43,40 @@ class Server(object):
             else:
                 return 0
 
-    def release(self, client_id):
+    def ping(self):
+        while True:
+            sleep(1)
+            try:
+                if self.__clients != {}:
+                    for player in range(1, 3):
+                        try:
+                            with self.__clients[player][0].lending_ownership():
+                                    self.__clients[player][0].ping(), player
+                        except KeyError:
+                            continue
+            except Exception:
+                self.release(player, True)
+
+    def release(self, client_id, sudden=False):
         with self.lock:
             self.__CONNECTED_CLIENTS -= 1
-            self.__clients[client_id][0]._pyroRelease()
+            if not sudden:
+                self.__clients[client_id][0]._pyroRelease()
             del self.__clients[client_id]
             # print(f"cliente {client_id} saiu. sobrou: {self.__clients}")
             if self.__clients == {}:
                     return self.__daemon.shutdown()
             self.send_message_to(3 - client_id, "Oponente desconectado!")
 
-    def alert_reconnection(self, client_id: int):
-        self.send_message_to(client_id, 'Reconectado com sucesso!')
-        self.send_message_to(3 - client_id, 'Oponente reconectado!')
+    def alert_connection(self, client_id: int):
+        try:
+            self.send_message_to(client_id, 'Conectado com sucesso!')
+        except Exception:
+            pass
+        try:
+            self.send_message_to(3 - client_id, 'Oponente conectado!')
+        except Exception:
+            pass
 
     def send_message_to(self, client_id: int, text: str):
         if client_id not in (1, 2):
@@ -186,7 +210,6 @@ class Server(object):
                                 client[0].handle_message("VOCÊ GANHOU!", sender)
                             else:
                                 client[0].handle_message("VOCÊ PERDEU", sender)
-
                 except Exception as e:
                         print(str(e))
 

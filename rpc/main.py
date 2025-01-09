@@ -26,6 +26,9 @@ class OthelloGame:
         self.root.protocol("WM_DELETE_WINDOW", self.finish)
         self.show_start_screen()
 
+    def ping(self):
+        return 'pong'
+
     def finish(self):
         self.root.destroy()
         if hasattr(self, 'server'):
@@ -152,6 +155,7 @@ class OthelloGame:
         self._create_chat()
         self._create_input()
         self._check_reconnection()
+        self.server.alert_connection(self.client_id)
 
     def _create_board(self, player_piece, opponent_piece):
         self.board_buttons = []
@@ -231,7 +235,6 @@ class OthelloGame:
             return
         self.state_button.config(command=self._give_up, text="DESISTIR")
         self.change_turn_to(self.server.current_player)
-        self.server.alert_reconnection(self.client_id)
 
     def _get_ready(self):
         self.server.ready(self.client_id)
