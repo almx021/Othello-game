@@ -5,7 +5,7 @@
 - Pyro5
 
 ## Como iniciar
-**Observação:** O termo "python" deve ser interpretado como "a palavra-chave para a execução do python no sistema operacional utilizado". Por exemplo, em debian, o termo "python" deve ser interpretado como "python"
+**Observação:** O termo "python" deve ser interpretado como "a palavra-chave para a execução do python no sistema operacional utilizado". Por exemplo, em debian, o termo "python" deve ser interpretado como "python3". Além disso, para o jogo remoto, as máquinas devem ser capazes de se conectar.
 ### Jogo local (mesmo endereço localhost)
 - Abra um terminal e execute o seguinte comando no terminal: python -m Pyro5.nameserver
 - Abra um terminal na pasta base do programa (rpc) e execute o seguinte comando no terminal: python server.py
