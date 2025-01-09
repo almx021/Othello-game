@@ -14,9 +14,10 @@
 - Para fechar o servidor, basta que ambos os usuários fechem o programa. Contudo, o nameserver deve ser manualmente fechado
 
 ### Jogo remoto (máquinas diferentes)
-- Abra um terminal em cada máquina e execute o seguinte comando em ambos os terminais: python -m Pyro5.nameserver <endereço ip da máquina>
+- Abra um terminal em cada máquina e execute o seguinte comando em ambos os terminais: python -m Pyro5.nameserver -n <endereço ip da máquina> 
 - Na máquina que será o servidor, abra um terminal na pasta base do programa (rpc) e execute o seguinte comando no terminal: python server.py
 - Em cada máquina, abra um terminal na pasta base do programa (rpc) e execute o seguinte comando em ambos os terminais: python main.py <endereço ip do servidor>
+- Bônus: Se o cliente estiver na máquina do servidor, é possível utilizar o mesmo comando de jogo local (python main.py), porém esse método é mais lento do que o declarativo
 - O jogo deverá entrar em execução. Para iniciar uma partida, basta que ambos cliquem no botão "iniciar", no canto inferior direito da tela
 - Para fechar o servidor, basta que ambos os usuários fechem o programa. Contudo, os nameservers devem ser manualmente fechados
 
