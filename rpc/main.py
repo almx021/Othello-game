@@ -26,9 +26,6 @@ class OthelloGame:
         self.root.protocol("WM_DELETE_WINDOW", self.finish)
         self.show_start_screen()
 
-    def ping(self):
-        return "pong"
-
     def finish(self):
         self.root.destroy()
         if hasattr(self, 'server'):
@@ -62,10 +59,20 @@ class OthelloGame:
             self.__connected = 1
 
     def _connect_local(self, id):
-        self.daemon = Pyro5.server.Daemon('localhost')
-        self.ns = Pyro5.api.locate_ns('localhost')
-        self.uri = self.daemon.register(self)
-        self.ns.register("client" + id, self.uri)
+        try:
+            self.daemon = Pyro5.server.Daemon('localhost')
+            self.ns = Pyro5.api.locate_ns('localhost')
+            self.uri = self.daemon.register(self)
+            self.ns.register("client" + id, self.uri)
+        except:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0] 
+
+            self.daemon = Pyro5.server.Daemon(ip)
+            self.ns = Pyro5.api.locate_ns(ip)
+            self.uri = self.daemon.register(self)
+            self.ns.register("client" + id, self.uri)
         
         self.server = Proxy("PYRONAME:server")
 
@@ -96,11 +103,11 @@ class OthelloGame:
         start_frame.pack(expand=True)
 
         new_game_button = tk.Button(
-            start_frame, text="Entrar", font=("Arial", 12, "bold"), command=self.open_loading_page
+            start_frame, text="Entrar", font=("Arial", 12, "bold"), command=self._open_loading_page
         )
         new_game_button.pack(pady=10)
 
-    def open_loading_page(self):
+    def _open_loading_page(self):
         for widget in self.root.winfo_children():
             widget.destroy()
 
@@ -127,6 +134,8 @@ class OthelloGame:
                 del self.server
             elif self.__connected == 3:
                 loading_label.config(text="Não foi possível conectar. Tente novamente.")
+                if hasattr(self, 'server'):
+                    del self.server
 
         Thread(target=self.connect, daemon=True).start()
         update_text()
@@ -142,6 +151,7 @@ class OthelloGame:
         self._create_info_label(player_piece)
         self._create_chat()
         self._create_input()
+        self._check_reconnection()
 
     def _create_board(self, player_piece, opponent_piece):
         self.board_buttons = []
@@ -159,11 +169,6 @@ class OthelloGame:
                 row_buttons.append(btn)
             self.board_buttons.append(row_buttons)
 
-        self.board_buttons[3][3].config(text="⚫", fg=player_piece)
-        self.board_buttons[4][4].config(text="⚫", fg=player_piece)
-        self.board_buttons[3][4].config(text="⚫", fg=opponent_piece)
-        self.board_buttons[4][3].config(text="⚫", fg=opponent_piece)
-        
         del row_buttons
 
         for row_col in range(8):
@@ -173,6 +178,13 @@ class OthelloGame:
             label = tk.Label(board_frame, text=str(row_col + 1), font=("Arial", 10, "bold"), bg="#835672")
             label.grid(row=row_col + 1, column=0, sticky="e", padx=(0, 5))
 
+        if self.server.is_game_running:
+            self.update_board()
+        else:
+            self.board_buttons[3][3].config(text="⚫", fg=player_piece)
+            self.board_buttons[4][4].config(text="⚫", fg=player_piece)
+            self.board_buttons[3][4].config(text="⚫", fg=opponent_piece)
+            self.board_buttons[4][3].config(text="⚫", fg=opponent_piece)
 
     def _create_info_label(self, player_color):
         self.info_frame = tk.Frame(self.root)
@@ -209,12 +221,36 @@ class OthelloGame:
 
         self.entry = tk.Entry(input_frame, font=("Arial", 10))
         self.entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.entry.bind("<Return>", lambda event: self.send_message())
+        self.entry.bind("<Return>", lambda event: self._send_message())
 
-        send_button = tk.Button(input_frame, text="Enviar", command=self.send_message)
+        send_button = tk.Button(input_frame, text="Enviar", command=self._send_message)
         send_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
-    def send_message(self):
+    def _check_reconnection(self):
+        if not self.server.is_game_running:
+            return
+        self.state_button.config(command=self._give_up, text="DESISTIR")
+        self.change_turn_to(self.server.current_player)
+        self.server.alert_reconnection(self.client_id)
+
+    def _get_ready(self):
+        self.server.ready(self.client_id)
+        self.state_button.config(command=self._give_up, text="DESISTIR")
+
+    def _give_up(self):
+        self.server.ready(self.client_id)
+        self.state_button.config(command=self._get_ready, text="INICIAR")
+
+    def _play(self, row, col):
+        if not self.server.is_game_running:
+            return
+
+        if self.server.current_player == self.client_id:
+            self.server.check_move(row, col)
+        else:
+            self.handle_message(text="VEZ DO OPONENTE!", sender=MessageSender.SERVER.value)
+    
+    def _send_message(self):
         text = self.entry.get()
         if not text.strip() == '':
             try:
@@ -235,16 +271,7 @@ class OthelloGame:
     
         self.chat_display.config(state="disabled")
         self.chat_display.see(tk.END)
-
-    def _play(self, row, col):
-        if not self.server.is_game_running:
-            return
-
-        if self.server.current_player == self.client_id:
-            self.server.check_move(row, col)
-        else:
-            self.handle_message(text="VEZ DO OPONENTE!", sender=MessageSender.SERVER.value)
-                
+            
     @Pyro5.api.oneway
     def update_board(self):
         try:
@@ -264,14 +291,6 @@ class OthelloGame:
         else:
             label_text = "TURNO DO OPONENTE"
         self.info_label.config(text=label_text)
-
-    def _get_ready(self):
-        self.server.ready(self.client_id)
-        self.state_button.config(command=self._give_up, text="DESISTIR")
-
-    def _give_up(self):
-        self.server.ready(self.client_id)
-        self.state_button.config(command=self._get_ready, text="INICIAR")
 
     @Pyro5.api.oneway
     def reset_data(self):

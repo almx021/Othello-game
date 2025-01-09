@@ -22,48 +22,37 @@ class Server(object):
         self.lock = Lock()
         self.chat_lock = Lock()
 
-        self.__GAME_BOARD = ...#self.create_board()
+        self.__GAME_BOARD = ...
 
-    # seção relacionada aos clientes
     def add_client(self, uri):
         with self.lock:
             if self.__CONNECTED_CLIENTS < self.__MAX_CLIENTS:
-                try:
-                    client = Proxy(uri)
-                    client._Proxy__pyroCreateConnection()
-                except Exception:
-                    return 0
+                client = Proxy(uri)
+                client._Proxy__pyroCreateConnection()
+                
                 self.__CONNECTED_CLIENTS += 1
-                id = self.__CONNECTED_CLIENTS
+                if len(self.__clients) == 1:
+                    id = 3 - next(iter(self.__clients.keys()))
+                else:
+                    id = self.__CONNECTED_CLIENTS
                 self.__clients[id] = [client, False]
                 return id
             else:
                 return 0
 
-    def declare_result(self, id, reason):
+    def release(self, client_id):
         with self.lock:
-            for client_id, client in self.__clients.items():
-                try:
-                    with client[0].lending_ownership():
-                        client[0].reset_data()
-                        client[1] = False
-                        
-                        sender = MessageSender.SERVER
-                        if reason == Reason.FORFEITH:
-                                if id == client_id:
-                                    client[0].handle_message("VOCÊ PERDEU! VOCÊ DESISTIU!", sender)
-                                else:
-                                    client[0].handle_message("VOCÊ GANHOU! OPONENTE DESISTIU!", sender)
-                        elif reason == Reason.DRAW:
-                            client[0].handle_message("EMPATE!", sender)
-                        else:
-                            if id == client_id:
-                                client[0].handle_message("VOCÊ GANHOU!", sender)
-                            else:
-                                client[0].handle_message("VOCÊ PERDEU", sender)
+            self.__CONNECTED_CLIENTS -= 1
+            self.__clients[client_id][0]._pyroRelease()
+            del self.__clients[client_id]
+            # print(f"cliente {client_id} saiu. sobrou: {self.__clients}")
+            if self.__clients == {}:
+                    return self.__daemon.shutdown()
+            self.send_message_to(3 - client_id, "Oponente desconectado!")
 
-                except Exception as e:
-                        print(str(e))
+    def alert_reconnection(self, client_id: int):
+        self.send_message_to(client_id, 'Reconectado com sucesso!')
+        self.send_message_to(3 - client_id, 'Oponente reconectado!')
 
     def send_message_to(self, client_id: int, text: str):
         if client_id not in (1, 2):
@@ -87,22 +76,6 @@ class Server(object):
                         sender = MessageSender.OPONENT
                     client[0].handle_message(text, sender)
 
-    def finish_game(self, id, reason):
-        with self.lock:
-            self.__GAME_RUNNING = False
-            self.current_player = False
-
-        self.declare_result(id, reason)
-
-    def release(self, client_id):
-        with self.lock:
-            self.__CONNECTED_CLIENTS -= 1
-            self.__clients[client_id][0]._pyroRelease()
-            del self.__clients[client_id]
-            # print(f"cliente {client_id} saiu. sobrou: {self.__clients}")
-            if self.__clients == {}:
-                    self.__daemon.shutdown()
-
     def create_board(self):
         board = []
         for row in range(8):
@@ -114,7 +87,13 @@ class Server(object):
         board[3][4], board[4][3] = Piece.BLACK, Piece.BLACK 
         del row_buttons
         return board
-    
+
+    def update_clients_boards(self):
+        with self.lock:
+            for client in self.__clients.values():
+                with client[0].lending_ownership():
+                    client[0].update_board()
+
     def change_turn(self):
         with self.lock:
             for client in self.__clients.values():
@@ -143,7 +122,7 @@ class Server(object):
 
         return False
 
-    def calculate_result(self):
+    def _calculate_result(self):
         with self.lock:
             if self.current_player == 1:
                 player_piece = Piece.BLACK
@@ -167,6 +146,49 @@ class Server(object):
             self.finish_game(self.current_player, Reason.VICTORY)
         else:
             self.finish_game(self.opponent_player, Reason.VICTORY)
+
+    def start_game(self):
+        with self.lock:
+            self.__GAME_RUNNING = True
+            self.game_board = self.create_board()
+            self.current_player = randint(1, 2)
+            self.__DIRECTIONS = (
+            (-1, 0), (-1, 1), (0, 1), (1, 1),
+            (1, 0), (1, -1), (0, -1), (-1, -1)
+            )
+            
+        self.update_clients_boards()
+
+        self.change_turn()
+        self.broadcast_message(0, "JOGO INICIADO")
+
+    def finish_game(self, id, reason):
+        with self.lock:
+            self.__GAME_RUNNING = False
+            self.current_player = False
+
+            for client_id, client in self.__clients.items():
+                try:
+                    with client[0].lending_ownership():
+                        client[0].reset_data()
+                        client[1] = False
+                        
+                        sender = MessageSender.SERVER
+                        if reason == Reason.FORFEITH:
+                                if id == client_id:
+                                    client[0].handle_message("VOCÊ PERDEU! VOCÊ DESISTIU!", sender)
+                                else:
+                                    client[0].handle_message("VOCÊ GANHOU! OPONENTE DESISTIU!", sender)
+                        elif reason == Reason.DRAW:
+                            client[0].handle_message("EMPATE!", sender)
+                        else:
+                            if id == client_id:
+                                client[0].handle_message("VOCÊ GANHOU!", sender)
+                            else:
+                                client[0].handle_message("VOCÊ PERDEU", sender)
+
+                except Exception as e:
+                        print(str(e))
 
     @Pyro5.api.oneway
     def check_move(self, row, col):
@@ -204,7 +226,7 @@ class Server(object):
                 self.send_message_to(self.opponent_player, "SEM JOGADAS VÁLIDAS! PASSOU A VEZ!")
                 return
             
-            self.calculate_result()
+            self._calculate_result()
             return
         
         with self.lock:
@@ -212,25 +234,22 @@ class Server(object):
         self.change_turn()
         return    
 
+    @Pyro5.api.oneway
+    def ready(self, client_id):
+        self.__clients[client_id][1] = not self.__clients[client_id][1]
+        if len(self.__clients.values()) == 2:
+            if all(x[1] is True for x in self.__clients.values()):
+                with self.lock:
+                    if self.is_game_running or not self.__CONNECTED_CLIENTS == self.__MAX_CLIENTS:
+                        return
+                self.start_game()
+            elif self.__GAME_RUNNING:
+                self.finish_game(client_id, Reason.FORFEITH)
+
     @property
     def is_game_running(self):
         return self.__GAME_RUNNING
     
-    def start_game(self):
-        with self.lock:
-            self.__GAME_RUNNING = True
-            self.game_board = self.create_board()
-            self.current_player = randint(1, 2)
-            self.__DIRECTIONS = (
-            (-1, 0), (-1, 1), (0, 1), (1, 1),
-            (1, 0), (1, -1), (0, -1), (-1, -1)
-            )
-            
-        self.update_clients_boards()
-
-        self.change_turn()
-        self.broadcast_message(0, "JOGO INICIADO")
-
     @property
     def current_player(self):
         return self.__TURN
@@ -252,24 +271,7 @@ class Server(object):
     @game_board.setter
     def game_board(self, board):
         self.__GAME_BOARD = board
-
-    @Pyro5.api.oneway
-    def ready(self, client_id):
-        self.__clients[client_id][1] = not self.__clients[client_id][1]
-        if len(self.__clients.values()) == 2:
-            if all(x[1] is True for x in self.__clients.values()):
-                with self.lock:
-                    if self.is_game_running or not self.__CONNECTED_CLIENTS == self.__MAX_CLIENTS:
-                        return
-                self.start_game()
-            elif self.__GAME_RUNNING:
-                self.finish_game(client_id, Reason.FORFEITH)
                 
-    def update_clients_boards(self):
-        with self.lock:
-            for client in self.__clients.values():
-                with client[0].lending_ownership():
-                    client[0].update_board()
 
 if __name__ == '__main__':
     import socket
